@@ -12,6 +12,10 @@ permissions:
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
+  # On pull_request events github.sha is the virtual merge commit SHA, which
+  # does not appear in the PR Checks tab. Use the branch-tip SHA so that commit
+  # statuses posted by ArgoCD notifications are visible in the PR UI.
+  COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   build-push:
@@ -43,21 +47,21 @@ jobs:
           file: docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          # Always push the exact commit SHA so the ArgoCD PR-preview ApplicationSet
-          # can reference it via the image field in the values file written below.
+          # Tag with COMMIT_SHA (branch-tip on PRs, push SHA on main) so the
+          # ArgoCD notification status lands on the same SHA shown in the PR UI.
           # On main also tag :latest for the DTAP raw-manifest deployments.
           tags: |
-            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:${{ env.COMMIT_SHA }}
             ${{ github.ref == 'refs/heads/main' && format('{0}:latest', env.IMAGE) || '' }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            GIT_COMMIT=${{ github.sha }}
+            GIT_COMMIT=${{ env.COMMIT_SHA }}
             GIT_BRANCH=${{ github.head_ref || github.ref_name }}
             BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.pull_request.updated_at }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Opens/updates a draft PR on naastest/team-payments so the ArgoCD
+  # Opens/updates a PR on naastest/team-payments so the ArgoCD
   # pr-preview-team-payments ApplicationSet creates a preview environment.
   # GH_TOKEN must be a classic PAT with repo scope stored as a repo secret.
   deploy-preview:
@@ -69,7 +73,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
-          GIT_SHA: ${{ github.sha }}
+          GIT_SHA: ${{ github.event.pull_request.head.sha }}
           GIT_BRANCH: ${{ github.head_ref }}
         run: |
           set -euo pipefail
