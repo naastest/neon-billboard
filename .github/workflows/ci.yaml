@@ -26,8 +26,11 @@ jobs:
         uses: docker/login-action@v3.3.0
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # GHCR_TOKEN = classic PAT with write:packages scope, stored as a repo secret.
+          # Needed because GITHUB_TOKEN cannot create new org-scoped packages unless the
+          # org enables it under Settings → Actions → General → Allow Actions to create packages.
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Build and push
         uses: docker/build-push-action@v6.9.0
