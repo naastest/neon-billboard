@@ -368,6 +368,13 @@
         <div class="info-card-label">&#x25BA; PR</div>
         <div class="info-card-value orange" id="val-pr">&mdash;</div>
       </div>
+      <div class="info-card" style="grid-column: 1 / -1; background: #04040f; border-color: #1a0a2e;">
+        <div class="info-card-label">&#x25BA; Transactions Processed</div>
+        <div style="display:flex; align-items:baseline; gap: 12px;">
+          <div class="info-card-value" style="font-size:1.4rem; color:#ff0080; text-shadow: 0 0 12px #ff0080;" id="val-txcount">0</div>
+          <div class="info-card-value" style="font-size:0.75rem; color:#555;" id="val-txrate">— tx/s</div>
+        </div>
+      </div>
     </div>
 
     <div class="ticker-wrap">
@@ -418,6 +425,23 @@
     document.getElementById('val-pr').textContent = prNum ? '#' + prNum : '—';
 
     // Uptime counter
+    // Simulated transaction counter — random rate between 120-180 tx/s
+    let txTotal = Math.floor(Math.random() * 9_000_000) + 1_000_000;
+    let lastTxTime = Date.now();
+    let lastTxTotal = txTotal;
+    function updateTransactions() {
+      const rate = 120 + Math.floor(Math.random() * 60);
+      txTotal += rate;
+      const elapsed = (Date.now() - lastTxTime) / 1000;
+      const txRate = Math.round((txTotal - lastTxTotal) / elapsed);
+      lastTxTime = Date.now();
+      lastTxTotal = txTotal;
+      document.getElementById('val-txcount').textContent = txTotal.toLocaleString();
+      document.getElementById('val-txrate').textContent = txRate.toLocaleString() + ' tx/s';
+    }
+    setInterval(updateTransactions, 1000);
+    updateTransactions();
+
     const startTime = Date.now();
     function updateUptime() {
       const total = Math.floor((Date.now() - startTime) / 1000);
