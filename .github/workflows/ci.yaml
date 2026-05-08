@@ -35,12 +35,20 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
 
+      - name: Smoke-test GHCR push access
+        run: |
+          docker pull hello-world:latest
+          docker tag hello-world:latest ${{ env.IMAGE }}:smoke-test
+          docker push ${{ env.IMAGE }}:smoke-test
+
       - name: Build and push
         uses: docker/build-push-action@v6.9.0
         with:
           context: .
           file: docker/Dockerfile
           push: true
+          provenance: false
+          sbom: false
           # Always push the exact commit SHA so the ArgoCD PR-preview ApplicationSet
           # can reference it via {{.head_sha}}.  On main also tag :latest for DTAP.
           tags: |
