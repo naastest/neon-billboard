@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, closed]
 
 permissions:
   contents: read
@@ -16,6 +16,7 @@ env:
 jobs:
   build-push:
     runs-on: ubuntu-24.04
+    if: github.event.action != 'closed'
     steps:
       - uses: actions/checkout@v4.2.2
 
@@ -27,9 +28,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          # GHCR_TOKEN = classic PAT with write:packages scope.
-          # Needed only to create the package the first time; GITHUB_TOKEN takes over after that.
-          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate image metadata
         id: meta
@@ -44,7 +43,8 @@ jobs:
           file: docker/Dockerfile
           push: true
           # Always push the exact commit SHA so the ArgoCD PR-preview ApplicationSet
-          # can reference it via {{.head_sha}}.  On main also tag :latest for DTAP.
+          # can reference it via the image field in the values file written below.
+          # On main also tag :latest for the DTAP raw-manifest deployments.
           tags: |
             ${{ env.IMAGE }}:${{ github.sha }}
             ${{ github.ref == 'refs/heads/main' && format('{0}:latest', env.IMAGE) || '' }}
@@ -55,3 +55,110 @@ jobs:
             BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.pull_request.updated_at }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Opens/updates a draft PR on naastest/team-payments so the ArgoCD
+  # pr-preview-team-payments ApplicationSet creates a preview environment.
+  # GH_TOKEN must be a classic PAT with repo scope stored as a repo secret.
+  deploy-preview:
+    runs-on: ubuntu-24.04
+    needs: build-push
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    steps:
+      - name: Open/update preview branch on team-payments
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PR_NUMBER: ${{ github.event.number }}
+          GIT_SHA: ${{ github.sha }}
+          GIT_BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          BRANCH="preview/neon-billboard-pr-${PR_NUMBER}"
+
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/naastest/team-payments.git" tp
+          cd tp
+          git config user.email "ci@naastest"
+          git config user.name "naastest CI"
+          git checkout -B "${BRANCH}"
+
+          # Write a complete values file for this PR. ArgoCD reads this directly —
+          # no valuesObject overrides needed on the ApplicationSet side.
+          cat > apps/helm/dev/neon-billboard.yaml << EOF
+          image: ghcr.io/naastest/neon-billboard:${GIT_SHA}
+          namespace: payments-backend-dev
+          env:
+            APP_ENV: preview
+            PR_NUMBER: "${PR_NUMBER}"
+            GIT_BRANCH: "${GIT_BRANCH}"
+            GIT_COMMIT: "${GIT_SHA}"
+          ingress:
+            enabled: true
+            host: neon-billboard-pr-${PR_NUMBER}.preview.naas.local
+          containerPort: 8080
+          replicaCount: 1
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          probes:
+            enabled: true
+            path: /health
+            readiness:
+              initialDelaySeconds: 3
+              periodSeconds: 10
+              failureThreshold: 3
+            liveness:
+              initialDelaySeconds: 5
+              periodSeconds: 30
+              failureThreshold: 3
+          EOF
+
+          git add apps/helm/dev/neon-billboard.yaml
+          git diff --staged --quiet && { echo "No changes, skipping."; exit 0; }
+          git commit -m "preview: neon-billboard PR #${PR_NUMBER} @ ${GIT_SHA:0:7}"
+          git push origin "${BRANCH}" --force
+
+          # Open a draft PR if none exists yet. On synchronize/reopen the branch
+          # push above is enough — ArgoCD re-syncs from the updated HEAD SHA.
+          EXISTING=$(gh pr list --repo naastest/team-payments \
+            --head "${BRANCH}" --state open --json number --jq '.[0].number // empty')
+          if [ -z "${EXISTING}" ]; then
+            gh pr create \
+              --repo naastest/team-payments \
+              --head "${BRANCH}" \
+              --base main \
+              --title "preview: neon-billboard PR #${PR_NUMBER}" \
+              --body "Automated preview environment for [naastest/neon-billboard#${PR_NUMBER}](https://github.com/naastest/neon-billboard/pull/${PR_NUMBER}).
+
+          **Branch:** \`${GIT_BRANCH}\`
+          **SHA:** \`${GIT_SHA}\`
+          **URL:** http://neon-billboard-pr-${PR_NUMBER}.preview.naas.local
+
+          > Managed by CI — do not merge or edit manually." \
+              --draft
+          fi
+
+  # Deletes the preview branch when the source PR closes, which causes ArgoCD
+  # to prune the preview Application and clean up the namespace automatically.
+  close-preview:
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    steps:
+      - name: Delete preview branch from team-payments
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          BRANCH="preview/neon-billboard-pr-${PR_NUMBER}"
+          gh api --method DELETE \
+            "repos/naastest/team-payments/git/refs/heads/${BRANCH}" \
+            || echo "Branch not found or already deleted — nothing to do."
