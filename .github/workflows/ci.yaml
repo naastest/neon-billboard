@@ -86,6 +86,7 @@ jobs:
           cat > apps/helm/dev/neon-billboard.yaml << EOF
           image: ghcr.io/naastest/neon-billboard:${GIT_SHA}
           namespace: payments-backend-dev
+          git_commit: "${GIT_SHA}"
           env:
             APP_ENV: preview
             PR_NUMBER: "${PR_NUMBER}"
