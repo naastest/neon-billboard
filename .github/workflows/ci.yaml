@@ -143,8 +143,7 @@ jobs:
           **SHA:** \`${GIT_SHA}\`
           **URL:** http://neon-billboard-pr-${PR_NUMBER}.preview.naas.local
 
-          > Managed by CI — do not merge or edit manually." \
-              --draft
+          > :robot: Managed by CI — do not merge or edit manually."
           fi
 
   # Deletes the preview branch when the source PR closes, which causes ArgoCD
